@@ -15,7 +15,7 @@ use std::{
 create_exception!(pymsyt, MsytError, PyException);
 
 #[pymodule]
-fn pymsyt(_py: Python, m: &PyModule) -> PyResult<()> {
+fn pymsyt(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<Msbt>()?;
     m.add_wrapped(wrap_pyfunction!(create)).unwrap();
     m.add_wrapped(wrap_pyfunction!(export)).unwrap();
@@ -32,7 +32,8 @@ fn pymsyt(_py: Python, m: &PyModule) -> PyResult<()> {
 /// :type json: bool. Defaults to False.
 /// :raises MsytError: Raises an `MsytError` if export fails for any reason.
 #[pyfunction]
-#[text_signature = "(input, output=None, json=False)"]
+#[pyo3(text_signature = "(input, output=None, json=False)")]
+#[pyo3(signature = (input, output=None, json=None))]
 fn export(input: String, output: Option<String>, json: Option<bool>) -> PyResult<()> {
     fn export_single<P: AsRef<Path>>(input: P, output: P, json: bool) -> PyResult<()> {
         let msyt = Msyt::from_msbt_file(&input)
@@ -105,7 +106,8 @@ fn export(input: String, output: Option<String>, json: Option<bool>) -> PyResult
 /// :type output: str (**must** be str, cannot be pathlike), optional
 /// :raises MsytError: Raises an `MsytError` if export fails for any reason.
 #[pyfunction]
-#[text_signature = "(input, big_endian, output=None)"]
+#[pyo3(text_signature = "(input, big_endian, output=None)")]
+#[pyo3(signature = (input, big_endian, output=None))]
 fn create(input: String, big_endian: bool, output: Option<String>) -> PyResult<()> {
     fn create_single<P: AsRef<Path>>(input: P, output: P, big_endian: bool) -> PyResult<()> {
         let text = fs::read_to_string(input)?;
@@ -212,7 +214,7 @@ impl Msbt {
     /// :rtype: `pymsyt.Msbt`
     /// :raises MsytError: Raises an `MsytError` if parsing fails.
     #[staticmethod]
-    #[text_signature = "(data, /)"]
+    #[pyo3(text_signature = "(data, /)")]
     pub fn from_binary(data: &[u8]) -> PyResult<Self> {
         let msyt = Msyt::from_msbt_bytes(data)
             .map_err(|e| MsytError::new_err(format!("Failed to parse MSBT file: {:?}", e)))?;
@@ -226,24 +228,24 @@ impl Msbt {
     /// :return: Returns the MSBT file as a bytes object.
     /// :rtype: bytes
     /// :raises MsytError: Raises an `MsytError` if serialization fails.
-    #[text_signature = "($self, big_endian, /)"]
+    #[pyo3(text_signature = "($self, big_endian, /)")]
     pub fn to_binary(&self, big_endian: bool) -> PyResult<Py<PyAny>> {
-        let gil = Python::acquire_gil();
-        let py = gil.python();
-        Ok(PyBytes::new(
-            py,
-            &self
-                .msyt
-                .clone()
-                .into_msbt_bytes(match big_endian {
-                    true => Endianness::Big,
-                    false => Endianness::Little,
-                })
-                .map_err(|e| {
-                    MsytError::new_err(format!("Failed to serialize MSBT file: {:?}", e))
-                })?,
-        )
-        .into())
+        Python::with_gil(|py| {
+            Ok(PyBytes::new(
+                py,
+                &self
+                    .msyt
+                    .clone()
+                    .into_msbt_bytes(match big_endian {
+                        true => Endianness::Big,
+                        false => Endianness::Little,
+                    })
+                    .map_err(|e| {
+                        MsytError::new_err(format!("Failed to serialize MSBT file: {:?}", e))
+                    })?,
+            )
+            .into())
+        })
     }
 
     /// Generates a YAML representation of this MSBT file.
@@ -251,7 +253,7 @@ impl Msbt {
     /// :return: Returns the MSBT as a YAML string.
     /// :rtype: str
     /// :raises MsytError: Raises an `MsytError` if serialization fails.
-    #[text_signature = "($self)"]
+    #[pyo3(text_signature = "($self)")]
     pub fn to_yaml(&self) -> PyResult<String> {
         Ok(serde_yaml::to_string(&self.msyt)
             .map_err(|e| MsytError::new_err(format!("Failed to dump MSBT to YAML: {:?}", e)))?)
@@ -262,7 +264,7 @@ impl Msbt {
     /// :return: Returns the MSBT as a JSON string.
     /// :rtype: str
     /// :raises MsytError: Raises an `MsytError` if serialization fails.
-    #[text_signature = "($self)"]
+    #[pyo3(text_signature = "($self)")]
     pub fn to_json(&self) -> PyResult<String> {
         Ok(serde_json::to_string(&self.msyt)
             .map_err(|e| MsytError::new_err(format!("Failed to dump MSBT to JSON: {:?}", e)))?)
@@ -276,7 +278,7 @@ impl Msbt {
     /// :rtype: `pymsyt.Msbt`
     /// :raises MsytError: Raises an `MsytError` if parsing fails.
     #[staticmethod]
-    #[text_signature = "(yaml, /)"]
+    #[pyo3(text_signature = "(yaml, /)")]
     pub fn from_yaml(yaml: String) -> PyResult<Self> {
         Ok(Self {
             msyt: serde_yaml::from_str(&yaml).map_err(|e| {
@@ -293,7 +295,7 @@ impl Msbt {
     /// :rtype: `pymsyt.Msbt`
     /// :raises MsytError: Raises an `MsytError` if parsing fails.
     #[staticmethod]
-    #[text_signature = "(json, /)"]
+    #[pyo3(text_signature = "(json, /)")]
     pub fn from_json(json: String) -> PyResult<Self> {
         Ok(Self {
             msyt: serde_json::from_str(&json).map_err(|e| {
@@ -307,16 +309,16 @@ impl Msbt {
     /// :return: Returns the MSBT as a Python dict.
     /// :rtype: dict
     /// :raises MsytError: Raises an `MsytError` if conversion fails.
-    #[text_signature = "($self)"]
+    #[pyo3(text_signature = "($self)")]
     pub fn to_dict(&self) -> PyResult<Py<PyAny>> {
-        let gil = Python::acquire_gil();
-        let py = gil.python();
-        let text = self.to_json()?;
-        let json = PyModule::import(py, "json")?;
-        let dict = json.call("loads", (text,), None).map_err(|e| {
-            MsytError::new_err(format!("Could not serialize MSBT to Python dict: {:?}", e))
-        })?;
-        Ok(Py::from(dict))
+        Python::with_gil(|py| {
+            let text = self.to_json()?;
+            let json = PyModule::import(py, "json")?;
+            let dict = json.call_method("loads", (text,), None).map_err(|e| {
+                MsytError::new_err(format!("Could not serialize MSBT to Python dict: {:?}", e))
+            })?;
+            Ok(Py::from(dict))
+        })
     }
 
     /// Parses an MSBT file from a Python dictionary.
@@ -327,13 +329,13 @@ impl Msbt {
     /// :rtype: `pymsyt.Msbt`
     /// :raises MsytError: Raises an `MsytError` if parsing fails.
     #[staticmethod]
-    #[text_signature = "(dict, /)"]
-    pub fn from_dict(dict: &PyDict) -> PyResult<Self> {
-        let gil = Python::acquire_gil();
-        let py = gil.python();
-        let json = PyModule::import(py, "json")?;
-        let res = json.call("dumps", (dict,), None)?;
-        let text = res.downcast::<PyString>()?;
-        Self::from_json(text.to_string())
+    //#[pyo3(text_signature = "(dict, /)")]
+    pub fn from_dict(dict: &Bound<'_, PyDict>) -> PyResult<Self> {
+        Python::with_gil(|py| {
+            let json = PyModule::import(py, "json")?;
+            let res = json.call_method("dumps", (dict,), None)?;
+            let text = res.downcast::<PyString>()?;
+            Self::from_json(text.to_string())
+        })
     }
 }
